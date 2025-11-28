@@ -38,8 +38,13 @@ local Context = require("rest-nvim.context").Context
 ---@field version string
 ---@field text string
 
----@type rest.Request|nil
-local rest_nvim_last_request = nil
+---@type table<string, (string|integer|nil)>
+local last_request_params = {
+    ---@type string|nil
+    name = nil,
+    ---@type integer|nil
+    bufnr = nil,
+}
 
 ---@param req rest.Request
 local function run_request(req)
@@ -50,7 +55,6 @@ local function run_request(req)
         vim.notify("Can't find registered client available for request", vim.log.levels.ERROR, { title = "rest.nvim" })
         return
     end
-    rest_nvim_last_request = req
 
     _G.rest_request = req
     vim.api.nvim_exec_autocmds("User", {
@@ -101,6 +105,7 @@ function M.run(name)
     if not req_node then
         return
     end
+
     local ctx = Context:new()
     if config.env.enable and vim.b._rest_nvim_env_file then
         ctx:load_file(vim.b._rest_nvim_env_file)
@@ -113,6 +118,11 @@ function M.run(name)
             vim.notify("failed to parse request", vim.log.levels.ERROR, { title = "rest.nvim" })
             return
         end
+
+        -- Save the parameters for :Rest last using the definitive parsed name
+        last_request_params.name = req.name
+        last_request_params.bufnr = bufnr
+
         local highlight = config.highlight
         if highlight.enable then
             utils.ts_highlight_node(0, req_node, require("rest-nvim.api").namespace, highlight.timeout)
@@ -123,16 +133,47 @@ end
 
 ---run last request
 function M.run_last()
-    local req = rest_nvim_last_request
-    if not req then
+    if not last_request_params.name or not last_request_params.bufnr then
         vim.notify("No last request found", vim.log.levels.WARN, { title = "rest.nvim" })
-        return false
+        return
     end
-    run_request(req)
+
+    local bufnr = last_request_params.bufnr
+    local name = last_request_params.name
+    ---@cast bufnr integer
+    ---@cast name string
+
+    if not vim.api.nvim_buf_is_valid(bufnr) then
+        vim.notify("Original buffer for last request is no longer open", vim.log.levels.ERROR, { title = "rest.nvim" })
+        return
+    end
+
+    -- Re-run the parsing and execution logic, just like M.run()
+    local original_bufnr = vim.api.nvim_get_current_buf()
+    vim.api.nvim_set_current_buf(bufnr)
+    local req_node = parser.get_request_node(name)
+    vim.api.nvim_set_current_buf(original_bufnr)
+
+    if not req_node then
+        return
+    end
+
+    local ctx = Context:new()
+    if config.env.enable and vim.b[bufnr]._rest_nvim_env_file then
+        ctx:load_file(vim.b[bufnr]._rest_nvim_env_file)
+    end
+
+    nio.run(function()
+        local req = parser.parse(req_node, bufnr, ctx)
+        if not req then
+            return -- Errors are already notified inside parser.parse
+        end
+        run_request(req)
+    end)
 end
 
 function M.last_request()
-    return rest_nvim_last_request
+    return not not (last_request_params.name and last_request_params.bufnr)
 end
 
 return M
