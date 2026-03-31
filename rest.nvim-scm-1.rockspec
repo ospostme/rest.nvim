@@ -25,7 +25,7 @@ dependencies = {
   "mimetypes",
   "xml2lua",
   "fidget.nvim",
-  "tree-sitter-http == 0.0.35",
+  -- tree-sitter-http is managed by nvim-treesitter, not luarocks
 }
 
 test_dependencies = {
